@@ -24,6 +24,7 @@ import           Control.Monad.Reader        (ReaderT, runReaderT)
 import           Data.Aeson                  (FromJSON, ToJSON)
 import           Data.Map                    (Map)
 import qualified Data.Map                    as Map
+import           Data.Maybe
 import           Data.Proxy                  (Proxy (Proxy))
 import           Data.Text                   (Text)
 import qualified Data.Text                   as T
@@ -70,10 +71,6 @@ type API = "api" :> "state" :> Get '[ JSON] GameView :<|> "api" :> "vote" :> Req
 api :: Proxy API
 api = Proxy
 
--- readerToHandler' :: STM Game -> ReaderT (STM Game) IO a -> Handler a
--- readerToHandler' stm r = liftIO $ runReaderT r stm
--- readerToHandler :: STM Game -> ReaderT (STM Game) IO :~> Handler
--- readerToHandler stm = NT (readerToHandler' stm)
 server :: TVar Game -> Server API
 server theGame = getGameView theGame :<|> processVote theGame
 
@@ -83,9 +80,6 @@ getGameView theGame = do
   gameState <- liftIO $ atomically $ readTVar theGame
   pure $ toView now gameState
 
--- do
---   currentGame <- atomically $ readTVar
---   pure $ toView currentGame
 toView :: UTCTime -> Game -> GameView
 toView now (Game {..}) = GameView {..}
   where
@@ -131,7 +125,33 @@ judge theGame =
     print newGame
 
 closeGame :: UTCTime -> Game -> Game
-closeGame now theGame = set nextJudgement (nextGame now) theGame
+closeGame now theGame =
+  set scores newScores $ set nextJudgement (nextGame now) theGame
+  where
+    frequencies :: Map Object Int
+    frequencies = Map.foldl doTally Map.empty (view votes theGame)
+    doTally :: Map Object Int -> Object -> Map Object Int
+    doTally tally object = Map.alter (inc 1) object tally
+    inc x Nothing  = Just x
+    inc x (Just n) = Just (n + x)
+    newScores :: Map UserID Int
+    newScores =
+      Map.foldlWithKey addScore (view scores theGame) (view votes theGame)
+    addScore currentScores userID object =
+      let delta = sum $ map (f object) [Rock, Paper, Scissors]
+      in Map.alter (inc delta) userID currentScores
+    f :: Object -> Object -> Int
+    f userObject otherObject =
+      let n = score userObject otherObject
+      in n * (fromMaybe 0 (Map.lookup otherObject frequencies))
+
+score :: Object -> Object -> Int
+score Rock Paper     = -1
+score Paper Rock     = 1
+score Scissors Rock  = -1
+score Rock Scissors  = 1
+score Paper Scissors = -1
+score Scissors Paper = 1
 
 nextGame :: UTCTime -> UTCTime
 nextGame = addUTCTime (fromIntegral 3)

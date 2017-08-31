@@ -14,9 +14,11 @@ module Lib
   ( runServer
   ) where
 
+import           Control.Concurrent          (forkIO, threadDelay)
 import           Control.Concurrent.STM      (STM, TVar, atomically, modifyTVar,
                                               newTVar, readTVar, writeTVar)
-import           Control.Lens                (assign, at, makeLenses, set)
+import           Control.Lens                (assign, at, makeLenses, set, view)
+import           Control.Monad               (forever)
 import           Control.Monad.IO.Class      (liftIO)
 import           Control.Monad.Reader        (ReaderT, runReaderT)
 import           Data.Aeson                  (FromJSON, ToJSON)
@@ -88,7 +90,7 @@ toView :: UTCTime -> Game -> GameView
 toView now (Game {..}) = GameView {..}
   where
     allScores = _scores
-    timeLeftMs = round $ diffUTCTime _nextJudgement now
+    timeLeftMs = round $ (*) 1000 $ toRational $ diffUTCTime _nextJudgement now
 
 processVote :: TVar Game -> Vote -> Handler ()
 processVote theGame vote = do
@@ -108,8 +110,28 @@ runServer = do
   now <- getCurrentTime
   let startTime = nextGame now
   theGame <- atomically $ newTVar $ initialGame startTime
+  _ <- forkIO $ judge theGame
   putStrLn "Starting"
   run 8080 $ simpleCors $ app theGame
 
+judge :: TVar Game -> IO ()
+judge theGame =
+  forever $ do
+    putStrLn "Sleeping"
+    threadDelay (1 * 1000 * 1000)
+    putStrLn "Judging"
+    now <- getCurrentTime
+    print now
+    atomically $ do
+      currentGame <- readTVar theGame
+      if (view nextJudgement currentGame) < now
+        then modifyTVar theGame $ closeGame now
+        else pure ()
+    newGame <- atomically $ readTVar theGame
+    print newGame
+
+closeGame :: UTCTime -> Game -> Game
+closeGame now theGame = set nextJudgement (nextGame now) theGame
+
 nextGame :: UTCTime -> UTCTime
-nextGame = addUTCTime (fromIntegral 10)
+nextGame = addUTCTime (fromIntegral 3)

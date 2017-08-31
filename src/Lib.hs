@@ -126,6 +126,7 @@ judge theGame =
 
 closeGame :: UTCTime -> Game -> Game
 closeGame now theGame =
+  set votes Map.empty $
   set scores newScores $ set nextJudgement (nextGame now) theGame
   where
     frequencies :: Map Object Int
